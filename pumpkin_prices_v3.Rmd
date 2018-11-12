@@ -1,0 +1,165 @@
+---
+title: "DSC5101 Group Project 3 Estimating Price Discrimination of Pumpkin"
+subtitle: by Dong Gang, Swetha Narayanan, Wang Shenghao, Wang Shuai Max
+output:
+  html_document:
+    highlight: tango
+    theme: yeti
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Data
+The dataset used in this project is stored in **agg_pumpkin_price.csv**. Import the data and remove the invalid entries.
+
+```{r}
+raw.data <- read.csv("agg_pumpkin_price.csv")
+rate_truck <- 0.37
+rate_rail <- 0.03
+rate_air <- 4.63
+rate_water <- 0.10
+lb_to_ton <- 0.0005
+km_to_ml <- 0.621371
+pumpkin.data <- raw.data[raw.data$Variety!="" & raw.data$Item.Size!="" & raw.data$Origin!="" & raw.data$Package!='each' & raw.data$Package!='bins',]
+pumpkin.data <- pumpkin.data[pumpkin.data$Origin!='CANADA' & pumpkin.data$Origin!='MEXICO' & pumpkin.data$Origin!='COSTA RICA',]
+pumpkin.data$Variety <- as.factor(pumpkin.data$Variety)
+pumpkin.data$Item.Size <- as.factor(pumpkin.data$Item.Size)
+pumpkin.data$City.Name <- as.factor(pumpkin.data$City.Name)
+pumpkin.data$Origin <- as.factor(pumpkin.data$Origin)
+pumpkin.data$avg_price <- (pumpkin.data$Low.Price + pumpkin.data$High.Price) / 2
+pumpkin.data$wt_in_ton <- pumpkin.data$Weight * lb_to_ton
+pumpkin.data$dist_in_ml <- pumpkin.data$Distance * km_to_ml
+pumpkin.data$shipping_cost <- pumpkin.data$dist_in_ml * pumpkin.data$wt_in_ton * rate_truck
+pumpkin.data$net_price <- pumpkin.data$avg_price - pumpkin.data$shipping_cost
+pumpkin.data <- pumpkin.data[pumpkin.data$net_price > 0,]
+```
+
+## Derive Baseline Model with Linear Regression
+The following assumptions are made to derive the baseline model.
+1. The time effect on pumpkin price is negligible.
+2. Shipment of pumpkins is via truck, with a uniform rate of 0.37 US$/(ton.ml).
+
+Hypothesis: Price is same across all the cities
+```{r}
+price.base.mod <- lm(net_price ~ Variety + Item.Size, data = pumpkin.data)
+summary(price.base.mod)
+
+price.base.mod.res <- lm(resid(price.base.mod) ~ City.Name, data = pumpkin.data)
+summary(price.base.mod.res)
+```
+However, it can be observed that the residuals of the net price difference have significant relations with cities.
+The initial hypothesis that there is no price difference between different cities fails. 
+
+
+Effect of cities incomes and CPI on price discrimination.
+```{r}
+income.data <- read.csv("Income.csv")
+income.data <- income.data[income.data$City.Name != "MIAMI",]
+income.data$coef <- as.numeric(coef(price.base.mod.res))
+income.model <- lm(coef ~ Income, data = income.data)
+summary(income.model)
+
+income.cpimodel <- lm(coef ~ CPI, data = income.data)
+summary(income.cpimodel)
+```
+
+
+Comparative Study on same origin (Michigan)
+```{r}
+michigan.data <- pumpkin.data[pumpkin.data$Origin=='MICHIGAN',]
+michigan.lm.mod1 <- lm(net_price ~ City.Name + Weight + Variety + Item.Size, data = michigan.data)
+summary(michigan.lm.mod1)
+```
+
+
+Second Degree Price Discrimination over pumpkin packages
+Hypothesis: all packages share the same unit price
+```{r}
+#find the Unit Price
+pumpkin.data$unitprice <- pumpkin.data$net_price / pumpkin.data$Weight
+price.lm.mod3 <- lm(unitprice ~ Variety + City.Name, data = pumpkin.data)
+summary(price.lm.mod3)
+price.lm.mod3.res <- lm(resid(price.lm.mod3) ~ Package, data = pumpkin.data)
+summary(price.lm.mod3.res)
+```
+The results indicate that the unit price of pumpkins is significantly different across different Packages. 
+The hypothsis is rejected.
+
+
+## Robustness Tests
+1. Robustness test with respect to variation of shippping cost
+```{r}
+pumpkin.data$Date <- as.Date(pumpkin.data$Date, format = "%m/%d/%Y")
+pumpkin.data$shipping_cost2 <- pumpkin.data$dist_in_ml * pumpkin.data$wt_in_ton * pumpkin.data$Rate
+pumpkin.data$net_price2 <- pumpkin.data$avg_price - pumpkin.data$shipping_cost
+
+price2.lm.mod2 <- lm(net_price2 ~ Variety + Item.Size, data = pumpkin.data)
+summary(price2.lm.mod2)
+price2.lm.mod2.res <- lm(resid(price2.lm.mod2) ~ City.Name, data = pumpkin.data)
+summary(price2.lm.mod2.res)
+
+income.data$coef2 <- as.numeric(coef(price2.lm.mod2.res))
+income.model2 <- lm(coef2 ~ Income, data = income.data)
+summary(income.model2)
+income.cpimodel2 <- lm(coef2 ~ CPI, data = income.data)
+summary(income.cpimodel2)
+
+pumpkin.data$unitprice <- pumpkin.data$net_price2 / pumpkin.data$Weight
+price2.lm.mod3 <- lm(unitprice ~ Variety + City.Name, data = pumpkin.data)
+summary(price2.lm.mod3)
+price2.lm.mod3.res <- lm(resid(price2.lm.mod3) ~ Package, data = pumpkin.data)
+summary(price2.lm.mod3.res)
+
+```
+
+
+2. Robustness test with respect to time effect
+```{r}
+library(plm)
+library(Formula)
+pumpkin.data$Date <- as.Date(pumpkin.data$Date, format = "%m/%d/%Y")
+price.lm.mod2 <- plm(net_price ~ Variety + Item.Size, data = pumpkin.data, index = c("Date"), model = "within")
+summary(price.lm.mod2)
+
+price.lm.mod2.res <- plm(resid(price.lm.mod2) ~ City.Name, data = pumpkin.data, index = c("Date"), model = "within")
+summary(price.lm.mod2.res)
+```
+
+
+## Demand Elasticity Analysis
+```{r}
+#Demand Elasticity
+nrow(pumpkin.data)
+
+lastyear.data <- pumpkin.data[which(pumpkin.data$Year == "2016" & pumpkin.data$City.Name == "SAN FRANCISCO" ) ,]
+thisyear.data <- pumpkin.data[which(pumpkin.data$Year == "2017" & pumpkin.data$City.Name == "SAN FRANCISCO" ) ,]
+lastyear.data <- pumpkin.data[which(pumpkin.data$Year == "2016" & pumpkin.data$City.Name == "COLUMBIA" ) ,]
+thisyear.data <- pumpkin.data[which(pumpkin.data$Year == "2017" & pumpkin.data$City.Name == "COLUMBIA" ) ,]
+
+
+Q1 <- sum(lastyear.data$Q)
+Price1 <- sum(lastyear.data$avg_price)/nrow(lastyear.data)
+Q2 <- sum(thisyear.data$Q)
+Price2 <- sum(thisyear.data$avg_price)/nrow(thisyear.data)
+e1 = ((Q2 - Q1)/Q1)/((Price2 - Price1)/Price1)
+e1
+#SF inelastic - 0.88
+#Columbia - Elastic - 4.856638
+#Boston - Elastic - 3.827553
+#New york - 3.392982
+#LA - Inelastic - 0.4743102
+
+plot(lastyear.data$Month,lastyear.data$avg_price)
+unique(lastyear.data$Month)
+
+lastyear.september.data <- lastyear.data[lastyear.data$Month == "9",]
+lastyear.october.data <- lastyear.data [lastyear.data$Month  == "10",]
+lastyear.november.data <- lastyear.data [lastyear.data$Month  == "11",]
+lastyear.december.data <- lastyear.data [lastyear.data$Month  == "12",]
+```
+
+***[THE END]**
